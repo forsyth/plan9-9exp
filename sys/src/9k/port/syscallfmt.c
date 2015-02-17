@@ -73,7 +73,7 @@ syscallfmt(int syscallno, uintptr pc, va_list list)
 	else
 		fmtprint(&fmt, "%s ", systab[syscallno].n);
 
-	fmtprint(&fmt, "%ulx ", pc);
+	fmtprint(&fmt, sizeof(uintptr)==sizeof(uvlong)? "%llux":"%lux ", pc);
 	switch(syscallno){
 	case SYSR1:
 		p = va_arg(list, uintptr);
