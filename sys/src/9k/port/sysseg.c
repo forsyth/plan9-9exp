@@ -73,15 +73,17 @@ ibrk(uintptr addr, int seg)
 		return s->top;
 
 	wlock(&s->lk);
+	if(waserror()){
+		wunlock(&s->lk);
+		nexterror();
+	}
 
 	DBG("ibrk addr %#p seg %d base %#p top %#p\n",
 		addr, seg, s->base, s->top);
 	/* We may start with the bss overlapping the data */
 	if(addr < s->base) {
-		if(seg != BSEG || up->seg[DSEG] == 0 || addr < up->seg[DSEG]->base) {
-			wunlock(&s->lk);
+		if(seg != BSEG || up->seg[DSEG] == 0 || addr < up->seg[DSEG]->base)
 			error(Enovmem);
-		}
 		addr = s->base;
 	}
 
@@ -98,12 +100,11 @@ ibrk(uintptr addr, int seg)
 		 * to-be-freed address space may have been passed to the kernel
 		 * already by another proc and is past the validaddr stage.
 		 */
-		if(s->ref > 1){
-			wunlock(&s->lk);
+		if(s->ref > 1)
 			error(Einuse);
-		}
 		mfreeseg(s, newtop, s->top);
 		s->top = newtop;
+		poperror();
 		wunlock(&s->lk);
 		mmuflush();
 		return newtop;
@@ -113,10 +114,8 @@ ibrk(uintptr addr, int seg)
 		ns = up->seg[i];
 		if(ns == 0 || ns == s)
 			continue;
-		if(newtop >= ns->base && newtop < ns->top) {
-			wunlock(&s->lk);
+		if(newtop >= ns->base && newtop < ns->top)
 			error(Esoverlap);
-		}
 	}
 
 	if(!physmemavail(newtop - s->top))
@@ -126,8 +125,9 @@ ibrk(uintptr addr, int seg)
 	if(nps == nil)
 		error(Enovmem);
 	s->pages = nps;
-
 	s->top = newtop;
+
+	poperror();
 	wunlock(&s->lk);
 
 	return newtop;
