@@ -262,7 +262,7 @@ tlsgen(Chan *c, char*, Dirtab *, int, int s, Dir *dp)
 {
 	Qid q;
 	TlsRec *tr;
-	char *name, *nm;
+	char *nm;
 	int perm, t;
 
 	q.vers = 0;
@@ -321,11 +321,8 @@ tlsgen(Chan *c, char*, Dirtab *, int, int s, Dir *dp)
 			nm = tr->user;
 		else
 			nm = eve;
-		if((name = trnames[s]) == nil){
-			name = trnames[s] = smalloc(16);
-			sprint(name, "%d", s);
-		}
-		devdir(c, q, name, 0, nm, 0555, dp);
+		snprint(up->genbuf, sizeof(up->genbuf), "%d", s);
+		devdir(c, q, up->genbuf, 0, nm, 0555, dp);
 		unlock(&tdlock);
 		return 1;
 	case Qconvdir:
@@ -1869,7 +1866,6 @@ static TlsRec*
 newtls(Chan *ch)
 {
 	TlsRec **pp, **ep, **np;
-	char **nmp;
 	int t, newmax;
 
 	if(waserror()) {
