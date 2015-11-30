@@ -60,16 +60,34 @@ physallocrange(usize *low, usize *high)
 void
 physinitfree(uintmem base, uintmem lim)
 {
-	if(physgig != nil && base >= 4ull*GiB)
-		bpoolinitfree(physgig, base, lim);
-	else
-		bpoolinitfree(phys, base, lim);
+	uintmem a, lo, hi;
+
+	base = ROUNDUP(base, (1<<MinK));
+	lim = ROUNDDN(lim, (1<<MinK));
+	if(base == lim)
+		return;
+	if(physgig != nil && (base >= 4ull*GiB || lim > 4ull*GiB)){
+		a = base;
+		if(a < 4ull*GiB)
+			a = 4ull*GiB;
+		lo = ROUNDUP(a, (1<<MidK));
+		hi = ROUNDDN(lim, (1<<MidK));
+		if(lo != hi)
+			bpoolinitfree(physgig, lo, hi);
+		if(base == a)
+			return;
+		lim = 4ull*GiB;
+	}
+	bpoolinitfree(phys, base, lim);
 }
 
 char*
 seprintphysstats(char *s,  char *e)
 {
-	return seprintbpoolstats(phys, s, e);
+	s = seprintbpoolstats(phys, s, e);
+	if(physgig != nil)
+		s = seprintbpoolstats(physgig, s, e);
+	return s;
 }
 
 void
