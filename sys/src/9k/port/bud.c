@@ -15,8 +15,10 @@ enum{
 	Nbits=		sizeof(uintmem)*8,
 	MaxK=		Nbits-1,		/* last usable k (largest block is 2^k) */
 
-	Busy=		0x80,	/* bit set in byte map if block busy (low order bits are block size) */
+	Busy=		0x80,	/* bit set in byte map if block busy (low order bits are block size, 0=unavailable) */
 };
+
+//#define	usize	uintmem
 
 typedef struct Blk Blk;
 struct Blk{
@@ -165,9 +167,11 @@ bpoolalloc(Bpool *pool, usize size)
 		a2 = a+((uintmem)1<<j);
 		bi = BI(a2);
 		DBG("split %#llux %#llux k=%d %#llux pool->kofb=%#ux\n", a, a2, j, (uintmem)1<<j, pool->kofb[bi]);
-		if(pool->kofb[bi] & Busy)
-			panic("bal: busy block %#llux k=%d\n", a, pool->kofb[bi] & ~Busy);
-		pool->kofb[bi] = j;	/* new size */
+		if(pool->kofb[bi] & Busy){
+			if(pool->kofb[bi] & ~Busy)
+				panic("bal: busy block %#llux k=%d\n", a, pool->kofb[bi] & ~Busy);
+		}
+		pool->kofb[bi] = j;	/* new size, not busy */
 		b2 = &pool->blocks[bi];
 		b2->forw = &pool->blist[j];
 		b2->back = pool->blist[j].back;
@@ -192,7 +196,9 @@ bpoolfree(Bpool *pool, uintmem a, usize size)
 		return;
 	if(k > pool->maxk)
 		k = pool->maxk;
-	DBG("%#p free %#llux %d\n", pool, a, k);
+	DBG("%#p free %#llux %#P k%d\n", pool, a, (uintmem)size, k);
+	if(a < pool->base)
+		panic("bpoolfree");
 	a -= pool->base;
 	bi = BI(a);
 	lock(&pool->lk);
@@ -201,19 +207,22 @@ bpoolfree(Bpool *pool, uintmem a, usize size)
 		panic("balfree: busy %#llux odd k k=%d kofb=%#ux\n", a, k, pool->kofb[bi]);
 	}
 	for(; k != pool->maxk; k++){
+		pool->kofb[bi] = Busy;
 		a2 = a ^ ((uintmem)1<<k);	/* buddy */
 		bi2 = BI(a2);
 		b2 = &pool->blocks[bi2];
-		if(bi2 >= pool->maxb || pool->kofb[bi2] != k)	/* valid, not busy, matching size */
+		if(bi2 >= pool->maxb || pool->kofb[bi2] != k)
 			break;
+		/* valid, not busy or empty, size k */
 		DBG("combine %#llux %#llux %d %#llux\n", a, a2, k, (uintmem)1<<k);
 		b2->back->forw = b2->forw;
 		b2->forw->back = b2->back;
+		pool->kofb[bi2] = Busy;
+		pool->blist[k].avail--;
 		if(a2 < a){
 			a = a2;
 			bi = bi2;
 		}
-		pool->blist[k].avail--;
 	}
 	pool->kofb[bi] = k;	/* sets size and resets Busy */
 	b = &pool->blocks[bi];
@@ -228,8 +237,14 @@ bpoolfree(Bpool *pool, uintmem a, usize size)
 void
 bpoolallocrange(Bpool *pool, usize *low, usize *high)
 {
-	*low = 1<<pool->mink;
-	*high = 1<<pool->maxk;
+	*low = (usize)1<<pool->mink;
+	*high = (usize)1<<pool->maxk;
+}
+
+static void
+ibpoolfree(Bpool *pool, uintmem base, usize size)
+{
+	bpoolfree(pool, base+pool->base, size);
 }
 
 void
@@ -259,7 +274,7 @@ bpoolinitfree(Bpool *pool, uintmem base, uintmem lim)
 	size = lim - base;
 	if(size < pool->minbsize)
 		return;
-	DBG("bpoolinitfree %#p %#P-%#P [%#P]\n", pool, base, lim, size);
+	DBG("bpoolinitfree %#p %#P-%#P [%#P]\n", pool, pool->base+base, pool->base+lim, size);
 
 	/* move up from base in largest blocks that remain aligned */
 	for(i=0; i<pool->maxk; i++){
@@ -271,7 +286,7 @@ bpoolinitfree(Bpool *pool, uintmem base, uintmem lim)
 				print(" ** error: %#P %#P\n", base, m);
 				return;
 			}
-			bpoolfree(pool, base, m);
+			ibpoolfree(pool, base, m);
 			base += m;
 			size -= m;
 		}
@@ -284,7 +299,7 @@ bpoolinitfree(Bpool *pool, uintmem base, uintmem lim)
 			print(" ** error: %#P %#P\n", base, m);
 			return;
 		}
-		bpoolfree(pool, base, m);
+		ibpoolfree(pool, base, m);
 		base += m;
 		size -= m;
 	}
@@ -297,7 +312,7 @@ bpoolinitfree(Bpool *pool, uintmem base, uintmem lim)
 				print(" ** error: %#P %#P\n", base, m);
 				return;
 			}
-			bpoolfree(pool, base, m);
+			ibpoolfree(pool, base, m);
 			base += m;
 			size &= ~m;
 		}
