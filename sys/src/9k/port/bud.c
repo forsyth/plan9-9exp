@@ -277,7 +277,7 @@ bpoolinitfree(Bpool *pool, uintmem base, uintmem lim)
 	DBG("bpoolinitfree %#p %#P-%#P [%#P]\n", pool, pool->base+base, pool->base+lim, size);
 
 	/* move up from base in largest blocks that remain aligned */
-	for(i=0; i<pool->maxk; i++){
+	for(i=pool->mink; i<pool->maxk; i++){
 		m = (uintmem)1 << i;
 		if(base & m){
 			if(size < m)
@@ -305,7 +305,7 @@ bpoolinitfree(Bpool *pool, uintmem base, uintmem lim)
 	}
 
 	/* free remaining chunks, decreasing alignment */
-	for(; size != 0; m >>= 1){
+	for(; size >= pool->minbsize; m >>= 1){
 		if(size & m){
 			DBG("\t%#P %#P\n", base, m);
 			if(base & (m-1)){
