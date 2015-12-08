@@ -471,8 +471,10 @@ closeproc(void *a)
 			poperror();
 		}
 		chanfree(c);
-		if(adec(&clunkq.running) >= 4 && seq > 4)
+		if(adec(&clunkq.running) >= 5 && seq > 5){
+			adec(&clunkq.active);
 			pexit("", 1);
+		}
 	}
 }
 
