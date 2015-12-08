@@ -402,6 +402,7 @@ struct {
 	QLock	q;
 	Rendez	r;
 	int	active;
+	int	running;
 } clunkq;
 
 static void closeproc(void*);
@@ -409,6 +410,8 @@ static void closeproc(void*);
 void
 ccloseq(Chan *c)
 {
+	int seq;
+
 	if(c->flag&CFREE)
 		panic("ccloseq %#p", getcallerpc(&c));
 
@@ -419,15 +422,20 @@ ccloseq(Chan *c)
 
 	lock(&clunkq.l);
 	c->next = nil;
-	if(clunkq.head)
+	if(clunkq.head != nil)
 		clunkq.tail->next = c;
 	else
 		clunkq.head = c;
 	clunkq.tail = c;
 	unlock(&clunkq.l);
 
-	if(!wakeup(&clunkq.r) && clunkq.active < 10)
-		kproc("closeproc", closeproc, nil);
+	if(!wakeup(&clunkq.r)){
+		seq = ainc(&clunkq.active);
+		if(seq < 10)
+			kproc("closeproc", closeproc, (void*)seq);
+		else
+			adec(&clunkq.active);
+	}
 }
 
 static int
@@ -437,13 +445,14 @@ clunkwork(void*)
 }
 
 static void
-closeproc(void*)
+closeproc(void *a)
 {
 	Chan *c;
 	int seq;
 
-	seq = ainc(&clunkq.active);
+	seq = (uintptr)a;
 	for(;;){
+		ainc(&clunkq.running);
 		qlock(&clunkq.q);
 		while(clunkq.head == nil){
 			if(!waserror()){
@@ -462,7 +471,7 @@ closeproc(void*)
 			poperror();
 		}
 		chanfree(c);
-		if(adec(&clunkq.active) > 4 && seq > 4)
+		if(adec(&clunkq.running) >= 4 && seq > 4)
 			pexit("", 1);
 	}
 }
@@ -919,14 +928,16 @@ walk(Chan **cp, char **names, int nnames, int nomount, int *nerror)
 				 * mh->mount->to == c, so start at mh->mount->next
 				 */
 				rlock(&mh->lock);
-				for(f = mh->mount->next; f; f = f->next)
-					if((wq = ewalk(f->to, nil, names+nhave, ntry)) != nil)
-						break;
-				runlock(&mh->lock);
-				if(f != nil){
-					dc = f->to->dev->dc;
-					devno = f->to->devno;
+				if(mh->mount != nil){
+					for(f = mh->mount->next; f != nil; f = f->next){
+						if((wq = ewalk(f->to, nil, names+nhave, ntry)) != nil){
+							dc = f->to->dev->dc;
+							devno = f->to->devno;
+							break;
+						}
+					}
 				}
+				runlock(&mh->lock);
 			}
 			if(wq == nil){
 				cclose(c);
@@ -1366,7 +1377,7 @@ namec(char *aname, int amode, int omode, int perm)
 	}
 
 	if(e.mustbedir && !(c->qid.type & QTDIR))
-		error("not a directory");
+		error(Enotdir);
 
 	if(amode == Aopen && (omode&3) == OEXEC && (c->qid.type & QTDIR))
 		error("cannot exec directory");
@@ -1579,7 +1590,7 @@ if(c->umh != nil){
 		goto Open;
 
 	default:
-		panic("unknown namec access %d\n", amode);
+		panic("unknown namec access %d", amode);
 	}
 
 	/* place final element in genbuf for e.g. exec */
@@ -1640,7 +1651,7 @@ validname0(char *aname, int slashok, int dup, uintptr pc)
 	Rune r;
 
 	name = aname;
-	if(!iskaddr(name)){	/* hmmmm */
+	if(!iskaddr(name)){
 		if(!dup)
 			print("warning: validname* called from %#p with user pointer", pc);
 		ename = vmemchr(name, 0, (1<<16));
