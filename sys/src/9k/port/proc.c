@@ -71,7 +71,7 @@ schedinit(void)		/* never returns */
 		if((e = up->edf) && (e->flags & Admitted))
 			edfrecord(up);
 		updatecpu(up);
-		m->proc = 0;
+		m->proc = nil;
 		switch(up->state) {
 		case Running:
 			ready(up);
@@ -179,7 +179,7 @@ hzsched(void)
 
 	/* unless preempted, get to run for at least 100ms */
 	if(anyhigher()
-	|| (!up->fixedpri && m->ticks > m->schedticks && anyready())){
+	|| (!up->fixedpri && tickscmp(m->ticks, m->schedticks) >= 0 && anyready())){
 		m->readied = nil;	/* avoid cooperative scheduling */
 		up->delaysched++;
 	}
@@ -192,7 +192,8 @@ hzsched(void)
 int
 preempted(void)
 {
-	if(up && up->state == Running &&
+	if(up != nil && up->state == Running &&
+	   m->ilockdepth == 0 &&
 	   up->nlocks == 0 &&
 	   !up->preempted &&
 	   anyhigher() &&
@@ -400,8 +401,16 @@ ready(Proc *p)
 		return;
 	}
 
-	if(up != p && (p->wired == nil || p->wired == m))
-		m->readied = p;	/* group scheduling */
+	if(p->state == Ready)
+		panic("double ready");
+
+	if(p != up){
+		while(p->mach != nil)
+			{}	/* wait for schedinit to finish */
+
+		if(p->wired == nil || p->wired == m)
+			m->readied = p;	/* group scheduling */
+	}
 
 	updatecpu(p);
 	pri = reprioritize(p);
@@ -1030,7 +1039,9 @@ pexit(char *exitstr, int freemem)
 	Chan *dot;
 	void (*pt)(Proc*, int, vlong, vlong);
 
-	up->alarm = 0;
+	if(up->alarm != 0)
+		procalarm(0);
+
 	if (up->tt)
 		timerdel(up);
 	pt = proctrace;
@@ -1157,12 +1168,12 @@ pexit(char *exitstr, int freemem)
 	qunlock(&up->debug);
 
 	edfstop(up);
-	if(up->edf) {
+	if(up->edf != nil){
 		free(up->edf);
 		up->edf = nil;
 	}
 
-	/* Sched must not loop for these locks */
+	/* Sched must not loop for this lock */
 	lock(&procalloc);
 
 	up->state = Moribund;
