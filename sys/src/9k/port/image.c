@@ -5,10 +5,10 @@
 #include	"fns.h"
 #include	"../port/error.h"
 
-#define IHASHSIZE	64
+#define IHASHSIZE	67
 #define ihash(s)	imagealloc.hash[s%IHASHSIZE]
 
-static	void	putsection(Section*);
+static	void	freesection(Section*);
 
 enum
 {
@@ -23,8 +23,27 @@ static struct Imagealloc
 	Image	lru;
 } imagealloc;
 
+static struct {
+	int	attachimage;		/* number of attach images */
+	int	found;			/* number of images found */
+	int	reclaims;			/* times imagereclaim was called */
+	uvlong	ticks;			/* total time in the main loop */
+	uvlong	maxt;			/* longest time in main loop */
+} irstats;
+
 static	void	freeimage(Image*);
 static	void	cleanimage(Image*);
+
+char*
+imagestats(char *p, char *e)
+{
+	p = seprint(p, e, "image reclaims: %d\n", irstats.reclaims);
+//	p = seprint(p, e, "image µs: %lld\n", fastticks2us(irstats.ticks));
+//	p = seprint(p, e, "image max µs: %lld\n", fastticks2us(irstats.maxt));
+	p = seprint(p, e, "image attachimage: %d\n", irstats.attachimage);
+	p = seprint(p, e, "image found: %d\n", irstats.found);
+	return p;
+}
 
 void
 initimage(void)
@@ -47,6 +66,7 @@ imagereclaim(void)
 {
 	Image *i;
 
+	irstats.reclaims++;
 	i = imagealloc.lru.prev;
 	if(i->next == i)
 		return nil;
@@ -55,6 +75,7 @@ imagereclaim(void)
 	i->next->prev = i->prev;
 	unlock(&imagealloc);
 	cleanimage(i);
+	lock(&imagealloc);
 	return i;
 }
 
@@ -69,6 +90,7 @@ attachimage(Chan *c)
 	 * Search the image cache for remains of the text from a previous
 	 * or currently running incarnation
 	 */
+	irstats.attachimage++;
 	for(i = ihash(c->qid.path); i; i = i->hash) {
 		if(c->qid.path == i->qid.path) {
 			lock(i);
@@ -77,8 +99,8 @@ attachimage(Chan *c)
 			   c->mchan == i->mchan &&
 			   c->dev->dc == i->dc) {
 //subtype
-				incref(i);
-				if(0 && i->ref == 1){	/* remove from LRU list */
+				irstats.found++;
+				if(incref(i) == 1){	/* remove from LRU list */
 					DBG("image %#p was LRU %s\n", i, c->path? c->path->s: "??");
 					i->prev->next = i->next;
 					i->next->prev = i->prev;
@@ -153,7 +175,7 @@ cleanimage(Image *i)
 
 	for(s = 0; s < nelem(i->section); s++){
 		if(i->section[s] != nil){
-			putsection(i->section[s]);
+			freesection(i->section[s]);
 			i->section[s] = nil;
 		}
 	}
@@ -198,7 +220,7 @@ newsection(uintptr size, ulong fstart, ulong flen)
 	lg2pgsize = PGSHFT;	/* TO DO: pick a page size */
 
 	if(size & ((1<<lg2pgsize)-1))
-		panic("newpages");
+		panic("newsection");
 
 	npages = size>>lg2pgsize;
 	if(npages > (SEGMAPSIZE*PTEPERTAB))
@@ -214,7 +236,7 @@ newsection(uintptr size, ulong fstart, ulong flen)
 }
 
 static void
-putsection(Section *s)
+freesection(Section *s)
 {
 	int i;
 	Page *p;
@@ -226,6 +248,7 @@ putsection(Section *s)
 			s->pages[i] = nil;
 		}
 	}
+	free(s);
 }
 
 static void
@@ -275,6 +298,13 @@ imagepage(Image *image, int isec, uintptr addr, uintptr soff)
 
 	c = image->c;
 	ask = s->flen-soff;
+	if(ask < 0){
+		if(isec == 0)
+			iprint("pio %s isec %d access past end; va %#p soff %#p pgsz=%p\n",
+				chanpath(c), isec, addr, soff, pgsize);
+		return newpage(1, s->lg2pgsize, nil);
+
+	}
 	if(ask > pgsize)
 		ask = pgsize;
 
