@@ -18,7 +18,7 @@ KADDR(uintmem pa)
 	if(sys->vmunmapped != 0){
 		if(pa < sys->vmunmapped-KSEG0)
 			return KSEG0+va;
-	}else	if(pa < TMFM)
+	}else if(pa < TMFM)
 		return KSEG0+va;
 	return KSEG2+va;
 }
