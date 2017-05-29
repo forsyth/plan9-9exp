@@ -1557,8 +1557,8 @@ procctlmemio(Proc *p, uintptr offset, int n, void *va, int read)
 	uchar *b;
 
 	for(;;) {
-		s = seg(p, offset, rlock);
-		if(s == 0)
+		s = seg(p, offset, 0);	/* might update in fixfault, below */
+		if(s == nil)
 			error(Ebadarg);
 
 		if(offset+n >= s->top)
