@@ -128,7 +128,7 @@ sysrfork(Ar0* ar0, va_list list)
 		nexterror();
 	}
 	for(i = 0; i < NSEG; i++)
-		if(up->seg[i])
+		if(up->seg[i] != nil)
 			p->seg[i] = dupseg(up->seg, i, n);
 	poperror();
 	qunlock(&p->seglock);
@@ -287,6 +287,9 @@ sysexec(Ar0* ar0, va_list list)
 		free(file);
 		nexterror();
 	}
+	argv = va_arg(list, char**);
+	evenaddr(PTR2UINT(argv));
+
 	chan = namec(file, Aopen, OEXEC, 0);
 	if(waserror()){
 		cclose(chan);
@@ -426,11 +429,9 @@ sysexec(Ar0* ar0, va_list list)
 
 	/*
 	 * Copy the strings pointed to by the syscall argument argv into
-	 * the temporary stack segment, being careful to check both argv and
-	 * the strings it points to are valid.
+	 * the temporary stack segment, being careful to check
+	 * the strings argv points to are valid.
 	 */
-	argv = va_arg(list, char**);
-	evenaddr(PTR2UINT(argv));
 	for(i = 0;; i++, argv++){
 		a = *(char**)validaddr(argv, sizeof(char**), 0);
 		if(a == nil)
@@ -477,8 +478,8 @@ sysexec(Ar0* ar0, va_list list)
 	 */
 	a = p = UINT2PTR(stack);
 	stack = sysexecstack(stack, argc);
-	if(stack-(argc+1)*sizeof(char**)-PGSZ < TSTKTOP-USTKSIZE)
-		error(Ebadexec);
+	if(stack-(argc+1)*sizeof(char**)-segpgsize(up->seg[ESEG]) < TSTKTOP-USTKSIZE)
+		error(Enovmem);
 
 	argv = (char**)stack;
 	*--argv = nil;
@@ -659,13 +660,13 @@ syssleep(Ar0* ar0, va_list list)
 void
 sysalarm(Ar0* ar0, va_list list)
 {
-	unsigned long ms;
+	ulong ms;
 
 	/*
-	 * long alarm(unsigned long millisecs);
+	 * long alarm(ulong millisecs);
 	 * Odd argument type...
 	 */
-	ms = va_arg(list, unsigned long);
+	ms = va_arg(list, ulong);
 
 	ar0->l = procalarm(ms);
 }
@@ -837,8 +838,6 @@ sysrendezvous(Ar0* ar0, va_list list)
 			p->rendval = PTR2UINT(va_arg(list, void*));
 			unlock(up->rgrp);
 
-			while(p->mach != 0)
-				;
 			ready(p);
 
 			ar0->v = UINT2PTR(val);
@@ -1121,7 +1120,7 @@ syssemacquire(Ar0* ar0, va_list list)
 	evenaddr(PTR2UINT(addr));
 	block = va_arg(list, int);
 
-	if((s = seg(up, PTR2UINT(addr), nil)) == nil)
+	if((s = findseg(up, PTR2UINT(addr))) == nil)
 		error(Ebadarg);
 	if(*addr < 0)
 		error(Ebadarg);
@@ -1141,11 +1140,11 @@ systsemacquire(Ar0* ar0, va_list list)
 	 * int tsemacquire(int* addr, ulong ms);
 	 */
 	addr = va_arg(list, int*);
-	addr = validaddr(addr, sizeof(int), 1);
+	addr = validaddr(addr, sizeof(int*), 1);
 	evenaddr(PTR2UINT(addr));
 	ms = va_arg(list, ulong);
 
-	if((s = seg(up, PTR2UINT(addr), nil)) == nil)
+	if((s = findseg(up, PTR2UINT(addr))) == nil)
 		error(Ebadarg);
 	if(*addr < 0)
 		error(Ebadarg);
@@ -1165,11 +1164,11 @@ syssemrelease(Ar0* ar0, va_list list)
 	 * int semrelease(int* addr, int count);
 	 */
 	addr = va_arg(list, int*);
-	addr = validaddr(addr, sizeof(int), 1);
+	addr = validaddr(addr, sizeof(int*), 1);
 	evenaddr(PTR2UINT(addr));
 	delta = va_arg(list, int);
 
-	if((s = seg(up, PTR2UINT(addr), nil)) == nil)
+	if((s = findseg(up, PTR2UINT(addr))) == nil)
 		error(Ebadarg);
 	if(delta < 0 || *addr < 0)
 		error(Ebadarg);
