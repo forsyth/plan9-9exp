@@ -76,12 +76,12 @@ BEGIN{
 				a[2] = "-I.";
 			s = a[2];
 			o = o mkrules(dir, exists, a, c, s);
-			l = listolate(a, "|");
+			l = alistolate(a, "|");
 			if(l != ""){
 				o = o "^(" l ")\\.$O:R:	" dir "/\\1.s\n";
 				o = o "\t$AS $AFLAGS " s " " dir "/$stem1.s\n";
 			}
-			l = listolate(c, "|");
+			l = alistolate(c, "|");
 			if(l != ""){
 				o = o "^(" l ")\\.$O:R:	" dir "/\\1.c\n";
 				o = o "\t$CC $CFLAGS " s " " dir "/$stem1.c\n";
@@ -539,7 +539,7 @@ function mkdevlist(					a, array, i, j, n, s){
 	return listolate(array, " ");
 }
 
-function listolate(array, sep,				a, s){
+function alistolate(array, sep,				a, s){
 	s = "";
 	for(a in array){
 		if(s == "")
@@ -551,15 +551,40 @@ function listolate(array, sep,				a, s){
 	return s;
 }
 
-function arrayify(array, tag, prefix, suffix, one,	a, i, j, n){
+function listolate(array, sep,				a, s){
+	s = "";
+	for(a=0; a<length(array); a++){
+		if(s == "")
+			s = array[a];
+		else
+			s = s sep array[a];
+	}
+
+	return s;
+}
+
+function arrayify(array, tag, prefix, suffix, one,	a, i, j, n,l,t){
+	l = length(array);
 	for(i = 1; i < section[tag]; i++){
 		n = split(line[tag, i], a);
-		if(one)
-			array[prefix a[1] suffix]++;
+		if(one){
+			t = prefix a[1] suffix;
+			if(!seen(array,t))
+				array[l++] = t;
+		}
 		for(j = 2; j <= n; j++){
 			if(a[$j] ~ /[+=-].*/)
 				continue;
-			array[a[j] suffix]++;
+			t = a[j] suffix;
+			if(!seen(array,t))
+				array[l++] = t;
 		}
 	}
+}
+
+function seen(array, v,a){
+	for(a in array)
+		if(array[a] == v)
+			return 1;
+	return 0;
 }
