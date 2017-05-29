@@ -5,6 +5,11 @@
 #include "fns.h"
 #include "../port/error.h"
 
+#define	RLOCK	rlock
+#define	RUNLOCK	runlock
+#define	WLOCK	wlock
+#define	WUNLOCK	wunlock
+
 Segment* (*_globalsegattach)(Proc*, char*);
 
 static Lock physseglock;
@@ -66,15 +71,15 @@ ibrk(uintptr addr, int seg)
 	int i;
 
 	s = up->seg[seg];
-	if(s == 0)
+	if(s == nil)
 		error(Ebadarg);
 
 	if(addr == 0)
 		return s->top;
 
-	wlock(&s->lk);
+	WLOCK(&s->lk);
 	if(waserror()){
-		wunlock(&s->lk);
+		WUNLOCK(&s->lk);
 		nexterror();
 	}
 
@@ -91,9 +96,6 @@ ibrk(uintptr addr, int seg)
 	newtop = ROUNDUP(addr, pgsize);
 	newsize = (newtop-s->base)/pgsize;
 
-
-	DBG("ibrk addr %#p newtop %#p newsize %ld\n", addr, newtop, newsize);
-
 	if(newtop < s->top) {
 		/*
 		 * do not shrink a segment shared with other procs, as the
@@ -105,7 +107,7 @@ ibrk(uintptr addr, int seg)
 		mfreeseg(s, newtop, s->top);
 		s->top = newtop;
 		poperror();
-		wunlock(&s->lk);
+		WUNLOCK(&s->lk);
 		mmuflush();
 		return newtop;
 	}
@@ -128,7 +130,7 @@ ibrk(uintptr addr, int seg)
 	s->top = newtop;
 
 	poperror();
-	wunlock(&s->lk);
+	WUNLOCK(&s->lk);
 
 	return newtop;
 }
@@ -302,11 +304,11 @@ syssegdetach(Ar0* ar0, va_list list)
 	s = 0;
 	for(i = 0; i < NSEG; i++)
 		if(s = up->seg[i]) {
-			rlock(&s->lk);
+			RLOCK(&s->lk);
 			if((addr >= s->base && addr < s->top) ||
 			   (s->top == s->base && addr == s->base))
 				goto found;
-			runlock(&s->lk);
+			RUNLOCK(&s->lk);
 		}
 
 	error(Ebadarg);
@@ -318,11 +320,11 @@ found:
 	 * there.
 	 */
 	if(s == up->seg[SSEG]){
-		runlock(&s->lk);
+		RUNLOCK(&s->lk);
 		error(Ebadarg);
 	}
-	up->seg[i] = 0;
-	runlock(&s->lk);
+	up->seg[i] = nil;
+	RUNLOCK(&s->lk);
 	putseg(s);
 	qunlock(&up->seglock);
 	poperror();
@@ -346,19 +348,19 @@ syssegfree(Ar0* ar0, va_list list)
 	 * int segfree(void*, usize);
 	 */
 	from = PTR2UINT(va_arg(list, void*));
-	s = seg(up, from, wlock);
+	s = seg(up, from, 0);
 	if(s == nil)
 		error(Ebadarg);
 	len = va_arg(list, usize);
 	to = (from + len) & ~(PGSZ-1);
 	if(to < from || to > s->top){
-		wunlock(&s->lk);
+		WUNLOCK(&s->lk);
 		error(Ebadarg);
 	}
 	from = ROUNDUP(from, PGSZ);
 
 	mfreeseg(s, from, to);
-	wunlock(&s->lk);
+	WUNLOCK(&s->lk);
 	mmuflush();
 
 	ar0->i = 0;
@@ -380,7 +382,7 @@ syssegflush(Ar0* ar0, va_list list)
 	len = va_arg(list, usize);
 
 	while(len > 0) {
-		s = seg(up, addr, rlock);
+		s = seg(up, addr, 1);
 		if(s == nil)
 			error(Ebadarg);
 
@@ -389,11 +391,11 @@ syssegflush(Ar0* ar0, va_list list)
 		if(addr+l > s->top)
 			l = s->top - addr;
 		if(l == 0 || addr+l < s->base){
-			runlock(&s->lk);
+			RUNLOCK(&s->lk);
 			error(Ebadarg);
 		}
 		pagesflush(s->pages, addr - s->base, l);	/* TO DO: check rounding-up */
-		runlock(&s->lk);
+		RUNLOCK(&s->lk);
 		addr += l;
 		len -= l;
 	}
