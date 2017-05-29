@@ -5,6 +5,11 @@
 #include	"fns.h"
 #include	"../port/error.h"
 
+#define	RLOCK rlock
+#define	WLOCK wlock
+#define	WUNLOCK	wunlock
+#define	RUNLOCK	runlock
+
 Segment *
 newseg(int type, uintptr base, uintptr top, Image *i, int isec)
 {
@@ -35,8 +40,9 @@ putseg(Segment *s)
 {
 	Image *i;
 
-	if(s == 0)
+	if(s == nil)
 		return;
+	// TO DO: need to lock s?
 	if(decref(s) != 0)
 		return;
 	i = s->image;
@@ -62,9 +68,9 @@ dupseg(Segment **seg, int segno, int share)
 	SET(n);
 	s = seg[segno];
 
-	rlock(&s->lk);
+	RLOCK(&s->lk);
 	if(waserror()){
-		runlock(&s->lk);
+		RUNLOCK(&s->lk);
 		nexterror();
 	}
 	switch(s->type&SG_TYPE) {
@@ -86,7 +92,7 @@ dupseg(Segment **seg, int segno, int share)
 	case SG_DATA:		/* Copy on write plus demand load info */
 		if(segno == TSEG){
 			poperror();
-			runlock(&s->lk);
+			RUNLOCK(&s->lk);
 			return data2txt(s);
 		}
 
@@ -101,13 +107,13 @@ dupseg(Segment **seg, int segno, int share)
 	if(s->ref > 1)
 		procflushseg(s);	/* to force copy-on-write/copy-on-reference */
 	poperror();
-	runlock(&s->lk);
+	RUNLOCK(&s->lk);
 	return n;
 
 sameseg:
 	incref(s);
 	poperror();
-	runlock(&s->lk);
+	RUNLOCK(&s->lk);
 	return s;
 }
 
@@ -151,32 +157,44 @@ isoverlap(Proc* p, uintptr va, usize len)
 }
 
 Segment*
-seg(Proc *p, uintptr addr, void (*dolock)(RWlock*))
+findseg(Proc *p, uintptr addr)
 {
 	Segment **s, **et, *n;
-	void (*dounlock)(RWlock*);
-
-	if(dolock == wlock)
-		dounlock = wunlock;
-	else
-		dounlock = runlock;
 
 	et = &p->seg[NSEG];
 	for(s = p->seg; s < et; s++) {
 		n = *s;
-		if(n == 0)
+		if(n == nil)
 			continue;
-		if(addr >= n->base && addr < n->top) {
-			if(dolock == nil)
-				return n;
-			dolock(&n->lk);
-			if(addr >= n->base && addr < n->top)
-				return n;
-			dounlock(&n->lk);
-		}
+		if(addr >= n->base && addr < n->top)
+			return n;
+	}
+	return nil;
+}
+
+Segment*
+seg(Proc *p, uintptr addr, int ronly)
+{
+	Segment *n;
+	void (*dolock)(RWlock*);
+	void (*dounlock)(RWlock*);
+
+	if(ronly){
+		dolock = rlock;
+		dounlock = runlock;
+	}else{
+		dolock = wlock;
+		dounlock = wunlock;
 	}
 
-	return 0;
+	n = findseg(p, addr);
+	if(n == nil)
+		return nil;
+	dolock(&n->lk);
+	if(addr >= n->base && addr < n->top)
+		return n;
+	dounlock(&n->lk);
+	return nil;
 }
 
 void
@@ -211,9 +229,9 @@ txt2data(Proc *p, Segment *s)
 	if(i == NSEG)
 		panic("segment gone");
 
-	runlock(&s->lk);
+	RUNLOCK(&s->lk);
 	putseg(s);
-	rlock(&ps->lk);
+	RLOCK(&ps->lk);
 	p->seg[i] = ps;
 	qunlock(&p->seglock);
 
