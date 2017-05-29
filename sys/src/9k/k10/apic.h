@@ -33,7 +33,7 @@ struct Lapic {
 };
 
 enum {
-	Nbus		= 256,
+	Nbus		= 256,			/* must be 256 */
 	Napic		= 254,			/* xAPIC architectural limit */
 	Nrdt		= 128,
 };
