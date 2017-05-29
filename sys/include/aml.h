@@ -41,7 +41,7 @@ int		amldebug;
 #pragma	varargck	type	"N"	void*
 
 /* to be provided by operating system */
-extern void*	amlalloc(int);
+extern void*	amlalloc(usize);
 extern void	amlfree(void*);
 
 extern void	amldelay(int);	/* microseconds */
