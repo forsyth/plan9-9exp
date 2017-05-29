@@ -6,6 +6,9 @@
 #include	"fns.h"
 #include	"../port/error.h"
 
+#define	WLOCK	wlock
+#define	WUNLOCK	wunlock
+
 int
 fault(uintptr addr, int read)
 {
@@ -23,17 +26,17 @@ fault(uintptr addr, int read)
 	spllo();
 
 	for(;;){
-		s = seg(up, addr, rlock);		/* leaves s->lk rlocked */
+		s = seg(up, addr, 0);		/* leaves s->lk wlocked */
 		if(s == nil)
 			return -1;
 		if(!read && (s->type&SG_RONLY)){
-			runlock(&s->lk);
+			WUNLOCK(&s->lk);
 			return -1;
 		}
 
 		sps = up->psstate;
 		up->psstate = "Fault";
-		if(fixfault(s, addr, read, 1) == 0){	/* runlocks s->lk */
+		if(fixfault(s, addr, read, 1) == 0){	/* wunlocks s->lk */
 			if(DBGFLG)
 				checkpages();
 			up->psstate = sps;
@@ -63,11 +66,11 @@ fixfault(Segment *s, uintptr addr, int read, int dommuput)
 	uintptr pgsize;
 	Pages *pages;
 
-	pages = s->pages;	/* TO DO: segwalk */
-	pgsize = 1<<pages->lg2pgsize;
+	pgsize = segpgsize(s);
 	addr &= ~(pgsize-1);
 	soff = addr-s->base;
 
+	pages = s->pages;	/* TO DO: segwalk */
 	p = &pages->map[soff/pages->ptemapmem];
 	if(*p == nil)
 		*p = ptealloc();
@@ -94,9 +97,9 @@ fixfault(Segment *s, uintptr addr, int read, int dommuput)
 
 		case SG_TEXT:	/* demand load */
 		case SG_DATA:
-			runlock(&s->lk);
+			WUNLOCK(&s->lk);
 			new = imagepage(s->image, s->isec, addr, soff);
-			rlock(&s->lk);
+			WLOCK(&s->lk);
 			if(*pg == nil){
 				*pg = new;
 				if(s->flushme)
@@ -136,7 +139,6 @@ fixfault(Segment *s, uintptr addr, int read, int dommuput)
 		break;
 
 	case SG_BSS:
-	case SG_SHARED:
 	case SG_STACK:
 	case SG_DATA:			/* copy on write */
 		DBG("data pg %#p: %#p -> %#P %d\n", pg, addr, (*pg)->pa, (*pg)->ref);
@@ -155,6 +157,8 @@ fixfault(Segment *s, uintptr addr, int read, int dommuput)
 			new = newpage(0, s->pages->lg2pgsize, &s->lk);
 			if(new == nil)
 				return -1;
+			if(s->flushme)
+				mmucachectl(new, PG_TXTFLUSH);
 			copypage(old, new);
 			*pg = new;
 			putpage(old);
@@ -164,6 +168,7 @@ fixfault(Segment *s, uintptr addr, int read, int dommuput)
 		mmuphys = PPN((*pg)->pa) | PTEWRITE | PTEVALID;
 		break;
 
+	case SG_SHARED:
 	case SG_PHYSICAL:
 		mmuphys = PPN((*pg)->pa) | PTEVALID;
 		if((s->pseg->attr & SG_RONLY) == 0)
@@ -172,7 +177,7 @@ fixfault(Segment *s, uintptr addr, int read, int dommuput)
 			mmuphys |= PTEUNCACHED;
 		break;
 	}
-	runlock(&s->lk);
+	WUNLOCK(&s->lk);
 
 	if(dommuput)
 		mmuput(addr, mmuphys, *pg);
@@ -188,10 +193,10 @@ okaddr(uintptr addr, long len, int write)
 {
 	Segment *s;
 
-	if(len >= 0) {
+	if(len >= 0 && addr+len >= addr){
 		for(;;) {
-			s = seg(up, addr, nil);
-			if(s == 0 || (write && (s->type&SG_RONLY)))
+			s = findseg(up, addr);
+			if(s == nil || (write && (s->type&SG_RONLY)))
 				break;
 
 			if(addr+len > s->top) {
@@ -261,7 +266,7 @@ checkpages(void)
 		s = *sp;
 		if(s == nil)
 			continue;
-		rlock(&s->lk);
+		WLOCK(&s->lk);
 		ps = s->pages;
 		pgsize = 1<<ps->lg2pgsize;
 		for(addr=s->base; addr<s->top; addr+=pgsize){
@@ -283,6 +288,6 @@ checkpages(void)
 			}
 			checkmmu(addr, pg->pa);
 		}
-		runlock(&s->lk);
+		WUNLOCK(&s->lk);
 	}
 }
