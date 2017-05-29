@@ -147,7 +147,7 @@ devclone(Chan *c)
 	Chan *nc;
 
 	if(c->flag & COPEN){
-		panic("devclone: file of type %C already open\n",
+		panic("devclone: file of type %C already open",
 			c->dev != nil? c->dev->dc: -1);
 	}
 
