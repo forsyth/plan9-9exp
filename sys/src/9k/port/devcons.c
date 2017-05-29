@@ -347,7 +347,8 @@ print(char *fmt, ...)
 	n = vseprint(buf, buf+sizeof(buf), fmt, arg) - buf;
 	va_end(arg);
 	putstrn(buf, n);
-if(strchr(buf, '\n') != nil)prflush();
+	if(strchr(buf, '\n') != nil)
+		prflush();
 
 	return n;
 }
@@ -427,7 +428,7 @@ panic(char *fmt, ...)
 	n = vseprint(buf+strlen(buf), buf+sizeof(buf), fmt, arg) - buf;
 	va_end(arg);
 	iprint("%s\n", buf);
-	if(consdebug)
+	if(consdebug != nil)
 		(*consdebug)();
 	prflush();
 //	splx(s);
@@ -1002,8 +1003,8 @@ consread(Chan *c, void *buf, long n, vlong off)
 			nexterror();
 		}
 		n = readstr(offset, buf, n, b);
-		free(b);
 		poperror();
+		free(b);
 		return n;
 
 	case Qswap:
