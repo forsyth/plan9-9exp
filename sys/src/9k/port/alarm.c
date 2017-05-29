@@ -4,31 +4,38 @@
 #include	"dat.h"
 #include	"fns.h"
 
+typedef struct Alarms Alarms;
+struct Alarms
+{
+	QLock;
+	Proc	*head;
+};
+
 static Alarms	alarms;
 static Rendez	alarmr;
 
 void
 alarmkproc(void*)
 {
-	Proc *rp;
+	Proc *rp, **l;
 	ulong now;
 
+	procpriority(up, PriKproc, 1);
 	for(;;){
 		now = sys->ticks;
 		qlock(&alarms);
-		while((rp = alarms.head) && tickscmp(now, rp->alarm) >= 0){
-			if(rp->alarm != 0L){
-				if(canqlock(&rp->debug)){
-					if(!waserror()){
-						postnote(rp, 0, "alarm", NUser);
-						poperror();
-					}
-					qunlock(&rp->debug);
-					rp->alarm = 0L;
-				}else
-					break;
-			}
-			alarms.head = rp->palarm;
+		l = &alarms.head;
+		while((rp = *l) != nil && tickscmp(now, rp->alarm) >= 0){
+			if(canqlock(&rp->debug)){
+				if(!waserror()){
+					postnote(rp, 0, "alarm", NUser);
+					poperror();
+				}
+				qunlock(&rp->debug);
+				rp->alarm = 0;
+				*l = rp->palarm;
+			}else
+				l = &rp->palarm;
 		}
 		qunlock(&alarms);
 
@@ -43,13 +50,26 @@ void
 checkalarms(void)
 {
 	Proc *p;
-	ulong now;
 
 	p = alarms.head;
-	now = sys->ticks;
-
-	if(p != nil && tickscmp(now, p->alarm) >= 0)
+	if(p != nil && tickscmp(sys->ticks, p->alarm) >= 0)
 		wakeup(&alarmr);
+}
+
+static void
+disalarm(Proc *p)
+{
+	Proc **l, *f;
+
+	qlock(&alarms);
+	for(l = &alarms.head; (f = *l) != nil; l = &f->palarm){
+		if(f == p){
+			*l = f->palarm;
+			f->palarm = nil;
+			break;
+		}
+	}
+	qunlock(&alarms);
 }
 
 ulong
@@ -58,9 +78,11 @@ procalarm(ulong time)
 	Proc **l, *f;
 	ulong when, old;
 
-	if(up->alarm)
-		old = tk2ms(up->alarm - sys->ticks);
-	else
+	old = up->alarm;
+	if(up->alarm){
+		disalarm(up);
+		old = tk2ms(old - sys->ticks);
+	}else
 		old = 0;
 	if(time == 0) {
 		up->alarm = 0;
@@ -71,32 +93,12 @@ procalarm(ulong time)
 		when = 1;
 
 	qlock(&alarms);
-	l = &alarms.head;
-	for(f = *l; f; f = f->palarm) {
-		if(up == f){
-			*l = f->palarm;
-			break;
-		}
-		l = &f->palarm;
-	}
-
-	up->palarm = 0;
-	if(alarms.head) {
-		l = &alarms.head;
-		for(f = *l; f; f = f->palarm) {
-			if(tickscmp(f->alarm, when) >= 0) {
-				up->palarm = f;
-				*l = up;
-				goto done;
-			}
-			l = &f->palarm;
-		}
-		*l = up;
-	}
-	else
-		alarms.head = up;
-done:
 	up->alarm = when;
+	l = &alarms.head;
+	while((f = *l) != nil && tickscmp(f->alarm, when) < 0)
+		l = &f->palarm;
+	up->palarm = *l;
+	*l = up;
 	qunlock(&alarms);
 
 	return old;
