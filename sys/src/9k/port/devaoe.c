@@ -1985,7 +1985,7 @@ static void
 idmove(char *p, ushort *a, unsigned n)
 {
 	int i;
-	char *op, *e;
+	char *op;
 
 	op = p;
 	for(i = 0; i < n / 2; i++){
@@ -1993,13 +1993,14 @@ idmove(char *p, ushort *a, unsigned n)
 		*p++ = a[i];
 	}
 	*p = 0;
-	while(p > op && *--p == ' ')
-		*p = 0;
-	e = p;
-	p = op;
-	while(*p == ' ')
-		p++;
-	memmove(op, p, n - (e - p));
+	while(p > op && p[-1] == ' ')
+		*--p = 0;
+	if(*op == ' '){
+		for(p = op; *p == ' '; p++)
+			;
+		while((*op++ = *p++) != 0)
+			;
+	}
 }
 
 static vlong
