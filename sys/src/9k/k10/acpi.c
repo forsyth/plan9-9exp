@@ -387,6 +387,16 @@ eisaid(void *v)
 	return id;
 }
 
+static void*
+walkval(void *dot, char *tag)
+{
+	void *x;
+
+	if((x = amlwalk(dot, tag)) == nil)
+		return nil;
+	return amlval(x);
+}
+
 /*static*/ int
 pcibusno(void *dot)
 {
@@ -399,11 +409,10 @@ pcibusno(void *dot)
 	if((x = amlwalk(dot, "^_HID")) != nil)
 		if((p = amlval(x)) != nil)
 			id = eisaid(p);
-	if((x = amlwalk(dot, "^_BBN")) == nil)
-		if((x = amlwalk(dot, "^_ADR")) == nil)
+	if((p = walkval(dot, "^_BBN")) == nil)
+		if((p = walkval(dot, "^_ADR")) == nil)
 			return -1;
-	if((p = amlval(x)) == nil)
-		return -1;
+
 	adr = amlint(p);
 	/* if root bridge, then we are done here */
 	if(id != nil && (strcmp(id, "PNP0A03")==0 || strcmp(id, "PNP0A08")==0))
@@ -622,7 +631,7 @@ struct Parsedat {
 static void
 parseapic(Tbl *t, Parsedat *dat)
 {
-	uchar *p, *e;
+	uchar *p0, *p, *e;
 	int i, c, nmach, maxmach;
 	uintmem lapicbase;
 
@@ -637,6 +646,7 @@ parseapic(Tbl *t, Parsedat *dat)
 	p += 8;
 
 	nmach = 0;
+	p0 = p;
 	for(; p < e; p += c){
 		c = p[1];
 		if(c < 2 || (p+c) > e)
@@ -652,7 +662,7 @@ parseapic(Tbl *t, Parsedat *dat)
 			ioapicinit(p[2], get32(p+8), get32(p+4));
 			break;
 		case 0x02:	/* Interrupt Source Override */
-			addirq(get32(p+4), BusISA, 0, p[3], get16(p+8));
+//			addirq(get32(p+4), BusISA, 0, p[3], get16(p+8));
 			break;
 		case 0x03:	/* NMI Source */
 			print("acpi: ignoring nmi source\n");
@@ -670,6 +680,18 @@ parseapic(Tbl *t, Parsedat *dat)
 		case 0x0B:	/* GIC */
 		case 0x0C:	/* GICD */
 			print("acpi: ignoring entry: %.2ux\n", *p);
+			break;
+		}
+	}
+
+	/* vbox can put these before i/o apics (!) */
+	for(p = p0; p < e; p += c){
+		c = p[1];
+		if(c < 2 || (p+c) > e)
+			break;
+		switch(*p){
+		case 0x02:	/* Interrupt Source Override */
+			addirq(get32(p+4), BusISA, 0, p[3], get16(p+8));
 			break;
 		}
 	}
