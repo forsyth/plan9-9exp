@@ -1,4 +1,3 @@
-typedef struct Alarms	Alarms;
 typedef struct Block	Block;
 typedef struct Bpool Bpool;
 typedef struct Chan	Chan;
@@ -129,12 +128,6 @@ struct RMap
 	Lock;
 };
 
-struct Alarms
-{
-	QLock;
-	Proc	*head;
-};
-
 /*
  * Access types in namec & channel flags
  */
@@ -177,7 +170,6 @@ struct Block
 	uchar*	lim;			/* 1 past the end of the buffer */
 	uchar*	base;			/* start of the buffer */
 	void	(*free)(Block*);
-	uchar	auxspc[64];
 	ushort	flag;
 	ushort	checksum;		/* IP checksum of complete packet (minus media header) */
 	ushort	vlan;
@@ -215,7 +207,6 @@ struct Chan
 	union {
 		void*	aux;
 		Qid	pgrpid;		/* for #p/notepg */
-		ulong	mid;		/* for ns in devproc */
 	};
 	Chan*	mchan;			/* channel to mounted server */
 	Qid	mqid;			/* qid of root of mount point */
@@ -342,6 +333,7 @@ enum
 	PG_NOFLUSH	= 0,
 	PG_TXTFLUSH	= 1,		/* flush dcache and invalidate icache */
 	PG_DATFLUSH	= 2,		/* flush both i & d caches (UNUSED) */
+	PG_NEWCOL	= 3,		/* page has been recolored */
 };
 
 struct Page
@@ -395,6 +387,7 @@ struct Pages
 	uintptr	xsize;		/* size in bytes */
 	usize	npages;		/* size in pages */
 	uchar	lg2pgsize;	/* log2(size of pages in set) */
+	uchar	mdom;
 	uintptr	ptemapmem;	/* space mapped by one Pte in this set */
 	void	(*freepage)(Page*);
 	int	mapsize;
@@ -423,7 +416,7 @@ struct Physseg
 {
 	ulong	attr;			/* Segment attributes */
 	char	*name;			/* Attach name */
-	uintptr	pa;			/* Physical address */
+	uintmem	pa;			/* Physical address */
 	usize	size;			/* Maximum segment size in pages */
 	Page	*(*pgalloc)(Segment*, uintptr);	/* Allocation if we need it */
 	void	(*pgfree)(Page*);
@@ -449,7 +442,7 @@ struct Segment
 {
 	Lock;
 	Ref;
-	RWlock	lk;		/* r: access and paging; w: grow or shrink */
+	RWlock	lk;		/* r: access; w: paging, growing, shrinking */
 	ushort	type;		/* segment type */
 	uintptr	base;		/* virtual base */
 	uintptr	top;		/* virtual top */
@@ -544,8 +537,6 @@ struct Palloc
 {
 	Pallocpg	avail[32];	/* indexed by log2 of page size (Page.lgsize) */
 	ulong	user;			/* how many user pages */
-	Page	*hash[PGHSIZE];
-	Lock	hashlock;
 };
 
 struct Waitq
