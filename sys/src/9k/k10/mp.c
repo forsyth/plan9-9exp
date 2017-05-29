@@ -54,16 +54,13 @@ int mpisabusno = -1;
 static void
 mpintrprint(char* s, u8int* p)
 {
-	char buf[128], *b, *e;
-	char format[] = " type %d flags %#ux bus %d IRQ %d APIC %d INTIN %d\n";
+	char buf[64];
 
-	b = buf;
-	e = b + sizeof(buf);
-	b = seprint(b, e, "mpparse: intr:");
+	buf[0] = 0;
 	if(s != nil)
-		b = seprint(b, e, " %s:", s);
-	seprint(b, e, format, p[1], l16get(p+2), p[4], p[5], p[6], p[7]);
-	print(buf);
+		snprint(buf, sizeof buf, " %s:", s);
+	print("mpparse: intr:%s type %d flags %#ux bus %d irq %d apic %d intin %d",
+		buf, p[1], l16get(p+2), p[4], p[5], p[6], p[7]);
 }
 
 static u32int
@@ -224,7 +221,7 @@ mpparse(PCMP* pcmp)
 				continue;
 			if(memcmp(p+2, "ISA   ", 6) == 0){
 				if(mpisabusno != -1){
-					print("mpparse: bus %d already have ISA bus %d\n",
+					print("mpparse: bus %d already has ISA bus %d\n",
 						p[1], mpisabusno);
 					continue;
 				}
@@ -321,7 +318,7 @@ mpparse(PCMP* pcmp)
 
 	/*
 	 * There's nothing of real interest in the extended table,
-	 * should just move along, but check it for consistency.
+	 * but check it for consistency.
 	 */
 	p = e;
 	e = p + l16get(pcmp->xlength);
@@ -430,8 +427,10 @@ mpsinit(void)
 	_MP_ *mp;
 	PCMP *pcmp;
 
-	if((mp = sigsearch("_MP_")) == nil)
+	if((mp = sigsearch("_MP_")) == nil){
+		print("mp: no tables\n");
 		return;
+	}
 	if(DBGFLG){
 		DBG("_MP_ @ %#p, addr %#ux length %ud rev %d",
 			mp, l32get(mp->addr), mp->length, mp->revision);
@@ -474,7 +473,7 @@ mpsinit(void)
 		p = ((u8int*)pcmp) + l16get(pcmp->length);
 		i = sigchecksum(p, l16get(pcmp->xlength));
 		if(((i+pcmp->xchecksum) & 0xff) != 0){
-			print("extended table checksums to %#ux\n", i);
+			print("mp: extended table checksums to %#ux\n", i);
 			vunmap(pcmp, n);
 			return;
 		}
