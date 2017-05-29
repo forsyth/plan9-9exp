@@ -37,7 +37,6 @@ enum
 {
 	Addrlen=	64,
 	Maxproto=	20,
-	Nhash=		64,
 	Nchans=		1024,
 	Maxincall=	Nchans/2,
 	MAClen=		16,		/* longest mac address */
