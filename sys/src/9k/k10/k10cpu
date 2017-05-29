@@ -6,12 +6,12 @@ dev +dev
 	pipe
 	proc
 	mnt
-#	pci		pci smbus
-	pci		pci
+	pci		pci smbus
 	srv
 	dup
 	rtc
 	ssl
+	tls
 	cap
 	kprof
 
@@ -191,7 +191,8 @@ dir
 	port
 
 lib
-	libc
+	libaml
 	libip
 	libsec
-	libaml
+	libmp
+	libc
