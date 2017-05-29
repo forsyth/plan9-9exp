@@ -42,8 +42,9 @@ print("user=%#lud\n", palloc.user);
 }
 
 /*
- * allocate and return a new page for page set s;
- * return nil iff s was locked on entry and had to be unlocked to wait for memory.
+ * Allocate and return a new page of the given size, optionally cleared to zero,
+ * with an underlying page set optionally read-locked (locked != nil).
+ * Return nil if the lock had to be unlocked to wait for memory.
  */
 Page*
 newpage(int clear, uint lg2pgsize, RWlock *locked)
@@ -85,7 +86,8 @@ newpage(int clear, uint lg2pgsize, RWlock *locked)
 		unlock(pg);
 		dontalloc = 0;
 		if(locked != nil) {
-			runlock(locked);
+			wunlock(locked);
+//			qunlock(locked);
 			locked = nil;
 			dontalloc = 1;
 		}
@@ -123,7 +125,7 @@ newpage(int clear, uint lg2pgsize, RWlock *locked)
 		panic("newpage: %#p: p->ref %d != 0", p, p->ref);
 
 	p->ref = 1;
-	mmucachectl(p, PG_NOFLUSH);
+	mmucachectl(p, PG_NEWCOL);
 	unlock(pg);
 
 Clear:
@@ -221,16 +223,16 @@ freepte(void (*fn)(Page*), Pte *p)
 	if(fn != nil){
 		ptop = &p->pages[PTEPERTAB];
 		for(pg = p->pages; pg < ptop; pg++) {
-			if(*pg == 0)
+			if(*pg == nil)
 				continue;
 			(*fn)(*pg);
-			*pg = 0;
+			*pg = nil;
 		}
 	}else{
 		for(pg = p->first; pg <= p->last; pg++)
-			if(*pg) {
+			if(*pg != nil) {
 				putpage(*pg);
-				*pg = 0;
+				*pg = nil;
 			}
 	}
 	free(p);
@@ -364,20 +366,16 @@ newpages(int lg2pgsize, uintptr size, void (*freepage)(Page*))
 		return nil;
 
 	mapsize = HOWMANY(npages, PTEPERTAB);
-	ps = smalloc(sizeof(*ps) + mapsize*sizeof(Pte*));
-//	if(waserror()){
-//		free(ps);
-//		nexterror();
-//	}
-
+	ps = mallocz(sizeof(*ps) + mapsize*sizeof(Pte*), 1);
+	if(ps == nil)
+		return nil;
 	ps->mapsize = mapsize;
 	ps->xsize = size;
 	ps->npages = npages;
 	ps->lg2pgsize = lg2pgsize;
 	ps->ptemapmem = PTEPERTAB<<ps->lg2pgsize;
 	ps->freepage = freepage;
-
-//	poperror();
+	ps->mdom = 0;
 	return ps;
 }
 
@@ -404,7 +402,7 @@ freepages(Pages *ps)
 
 	emap = &ps->map[ps->mapsize];
 	for(pp = ps->map; pp < emap; pp++)
-		if(*pp)
+		if(*pp != nil)
 			freepte(ps->freepage, *pp);
 	free(ps);
 }
@@ -417,7 +415,7 @@ addpage(Pages *ps, uintptr soff, Page *p)
 
 	/* no lock, since this is called only during initialisation */
 
-	if(soff >= ps->npages)
+	if(soff >= ps->xsize)
 		panic("addpage");
 	pte = &ps->map[soff/ps->ptemapmem];
 	if(*pte == 0)
