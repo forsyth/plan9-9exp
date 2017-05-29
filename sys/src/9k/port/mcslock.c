@@ -95,8 +95,10 @@ lock(Lock *l)
 {
 	LockEntry *ql;
 
-	if(up != nil)
+	if(up != nil){
 		up->nlocks++;
+		up->lastlock = l;
+	}
 	ql = allocle(l, getcallerpc(&l));
 	mcslock(l, ql);
 	l->e = ql;
@@ -175,12 +177,12 @@ iunlock(Lock *l)
 	LockEntry *ql;
 
 	if(islo())
-		panic("iunlock while lo: pc %#p\n", getcallerpc(&l));
+		panic("iunlock while lo: pc %#p", getcallerpc(&l));
 	ql = findle(l);
 	if(!ql->isilock)
-		panic("iunlock of lock: pc %#p\n", getcallerpc(&l));
+		panic("iunlock of lock: pc %#p", getcallerpc(&l));
 	if(ql->m != m){
-		panic("iunlock by cpu%d, locked by cpu%d: pc %#p\n",
+		panic("iunlock by cpu%d, locked by cpu%d: pc %#p",
 			m->machno, ql->m->machno, getcallerpc(&l));
 	}
 	mcsunlock(l, ql);
@@ -208,8 +210,7 @@ lockgetpc(Lock *l)
 {
 	LockEntry *ql;
 
-	ql = l->e;
-	if(ql != nil && ql->used == l)
+	if(l != nil && (ql = l->e) != nil && ql->used == l)
 		return ql->pc;
 	return 0;
 }
