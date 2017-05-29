@@ -28,16 +28,16 @@ struct Rdt {
 };
 
 enum {						/* IOAPIC registers */
-	Ioregsel	= 0x00,			/* indirect register address */
-	Iowin	= 0x04,			/* indirect register data */
-	Ioipa		= 0x08,			/* IRQ Pin Assertion */
-	Ioeoi		= 0x10,			/* EOI */
+	IOregsel	= 0x00,			/* indirect register address */
+	IOwin	= 0x04,			/* indirect register data */
+	IOipa	= 0x08,			/* IRQ Pin Assertion */
+	IOeoi	= 0x10,			/* EOI */
 
 	IOapicid	= 0x00,			/* Identification */
 	IOapicver	= 0x01,			/* Version */
 	IOapicarb	= 0x02,			/* Arbitration */
-	Ioabcfg	= 0x03,			/* Boot Configuration */
-	Ioredtbl	= 0x10,			/* Redirection Table */
+	IOabcfg	= 0x03,			/* Boot Configuration */
+	IOredtbl	= 0x10,			/* Redirection Table */
 };
 
 static Rdt rdtarray[Nrdt];
@@ -103,23 +103,23 @@ gsitoapicid(int gsi, uint *intin)
 static void
 rtblget(IOapic* apic, int sel, u32int* hi, u32int* lo)
 {
-	sel = Ioredtbl + 2*sel;
+	sel = IOredtbl + 2*sel;
 
-	apic->addr[Ioregsel] = sel+1;
-	*hi = apic->addr[Iowin];
-	apic->addr[Ioregsel] = sel;
-	*lo = apic->addr[Iowin];
+	apic->addr[IOregsel] = sel+1;
+	*hi = apic->addr[IOwin];
+	apic->addr[IOregsel] = sel;
+	*lo = apic->addr[IOwin];
 }
 
 static void
 rtblput(IOapic* apic, int sel, u32int hi, u32int lo)
 {
-	sel = Ioredtbl + 2*sel;
+	sel = IOredtbl + 2*sel;
 
-	apic->addr[Ioregsel] = sel+1;
-	apic->addr[Iowin] = hi;
-	apic->addr[Ioregsel] = sel;
-	apic->addr[Iowin] = lo;
+	apic->addr[IOregsel] = sel+1;
+	apic->addr[IOwin] = hi;
+	apic->addr[IOregsel] = sel;
+	apic->addr[IOwin] = lo;
 }
 
 Rdt*
@@ -242,16 +242,16 @@ ioapicinit(int id, int ibase, uintmem pa)
 	 * responsibility of the O/S to set the APIC ID.
 	 */
 	lock(apic);
-	apic->addr[Ioregsel] = IOapicver;
-	apic->nrdt = ((apic->addr[Iowin]>>16) & 0xff) + 1;
+	apic->addr[IOregsel] = IOapicver;
+	apic->nrdt = ((apic->addr[IOwin]>>16) & 0xff) + 1;
 	if(ibase != -1)
 		apic->gsib = ibase;
 	else{
 		apic->gsib = gsib;
 		gsib += apic->nrdt;
 	}
-	apic->addr[Ioregsel] = IOapicid;
-	apic->addr[Iowin] = id<<24;
+	apic->addr[IOregsel] = IOapicid;
+	apic->addr[IOwin] = id<<24;
 	unlock(apic);
 
 	return apic;
