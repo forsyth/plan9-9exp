@@ -3,7 +3,7 @@
 #include <aml.h>
 
 void*
-amlalloc(int n)
+amlalloc(usize n)
 {
 	return mallocz(n, 1);
 }
