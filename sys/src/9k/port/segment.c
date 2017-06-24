@@ -213,6 +213,9 @@ segclock(uintptr pc)
 	}
 }
 
+/*
+ * remap the content of text segment s as data, received and returned wlocked
+ */
 Segment*
 txt2data(Proc *p, Segment *s)
 {
@@ -229,9 +232,9 @@ txt2data(Proc *p, Segment *s)
 	if(i == NSEG)
 		panic("segment gone");
 
-	RUNLOCK(&s->lk);
+	wunlock(&s->lk);
 	putseg(s);
-	RLOCK(&ps->lk);
+	wlock(&ps->lk);
 	p->seg[i] = ps;
 	qunlock(&p->seglock);
 
