@@ -17,7 +17,7 @@ typedef struct Op Op;
 
 struct Heap {
 	Heap	*link;
-	short	size;
+	int	size;
 	uchar	mark;
 	char	tag;
 };
@@ -123,14 +123,17 @@ struct Frame {
 struct Interp {
 	uchar	*pc;
 	Frame	*fp;
+	Frame	*fb;
 };
 
 static Interp	interp;
 static Frame	stack[32];
 
-#define PC	interp.pc
+#define	PC	interp.pc
 #define	FP	interp.fp
-#define FB	stack
+#define	FB	interp.fb
+
+#define F0	stack
 #define FT	&stack[nelem(stack)]
 
 static Heap *hp;
@@ -139,16 +142,17 @@ enum {
 	Obad, Onop, Odebug,
 	Ostr, Obyte, Oword, Odword, Oqword, Oconst,
 	Onamec, Oname, Oscope, Oalias,
-	Oreg, Ofld, Oxfld, Opkg, Ovpkg, Oenv, Obuf, Omet, 
+	Oreg, Ofld, Oxfld, Obfld, Opkg, Ovpkg, Oenv, Obuf, Omet, 
 	Odev, Ocpu, Othz, Oprc,
 	Oadd, Osub, Omod, Omul, Odiv, Oshl, Oshr, Oand, Onand, Oor,
 	Onor, Oxor, Onot, Olbit, Orbit, Oinc, Odec,
 	Oland, Olor, Olnot, Oleq, Olgt, Ollt,
-	Oindex, Omutex, Oevent,
+	Oindex, Omatch, Omutex, Oevent,
 	Ocfld, Ocfld0, Ocfld1, Ocfld2, Ocfld4, Ocfld8,
 	Oif, Oelse, Owhile, Obreak, Oret, Ocall, 
 	Ostore, Oderef, Osize, Oref, Ocref, Ocat,
 	Oacq, Orel, Ostall, Osleep, Oload, Ounload,
+	Otoint,
 };
 
 static Op optab[];
@@ -233,7 +237,7 @@ gc(void)
 		if(h->mark & 2)
 			gcmark(H2D(h));
 
-	for(f = FP; f >= FB; f--){
+	for(f = FP; f >= F0; f--){
 		for(i=0; i<f->narg; i++)
 			gcmark(f->arg[i]);
 		gcmark(f->env);
@@ -281,6 +285,7 @@ mk(int tag, int size)
 	int a;
 
 	a = sizeof(Heap) + size;
+	assert(a >= 0);
 	h = amlalloc(a);
 	h->size = size;
 	h->tag = tag;
@@ -295,7 +300,7 @@ mki(uvlong i)
 	uvlong *v;
 
 	v = mk('i', sizeof(uvlong));
-	*v = i;
+	*v = i & amlintmask;
 	return v;
 }
 
@@ -392,6 +397,9 @@ getname(Name *dot, char *path, int new)
 	int i, s;
 	Name *x;
 
+	if(dot == nil)
+		return nil;
+
 	s = !new;
 	if(*path == '\\'){
 		path++;
@@ -480,8 +488,12 @@ putle(uchar *p, int len, uvlong v)
 static uvlong
 rwreg(void *reg, int off, int len, uvlong v, int write)
 {
+	Interp save;
 	uchar buf[8], *p;
 	Region *r;
+
+	save = interp;	/* save, in case we reenter the interpreter */
+	FB = FP+1;	/* allocate new base */
 
 	switch(TAG(reg)){
 	case 'b':
@@ -493,7 +505,7 @@ rwreg(void *reg, int off, int len, uvlong v, int write)
 			putle(p, len, v);
 		else
 			v = getle(p, len);
-		return v;
+		goto Out;
 
 	case 'r':
 		r = reg;
@@ -542,10 +554,13 @@ rwreg(void *reg, int off, int len, uvlong v, int write)
 					(Name*)r->name, spacename[r->space],
 					r->off, off, len, v);
 		}
-		return v;
+		goto Out;
 	}
 
-	return ~0;
+	v = -1;
+Out:
+	interp = save;	/* restore */
+	return v;
 }
 
 static uvlong
@@ -833,9 +848,9 @@ Vfmt(Fmt *f)
 		r = p;
 		e = r->ref;
 		if(c == 'A')
-			return fmtprint(f, "Arg%ld=%V", r->ptr - e->arg, *r->ptr);
+			return fmtprint(f, "Arg%zd=%V", r->ptr - e->arg, *r->ptr);
 		if(c == 'L')
-			return fmtprint(f, "Local%ld=%V", r->ptr - e->loc, *r->ptr);
+			return fmtprint(f, "Local%zd=%V", r->ptr - e->loc, *r->ptr);
 	case 'n':
 		return fmtprint(f, "%s", (char*)p);
 	case 's':
@@ -901,7 +916,7 @@ dumpregs(void)
 	print("\n*** dumpregs: PC=%p FP=%p\n", PC, FP);
 	e = nil;
 	for(f = FP; f >= FB; f--){
-		print("%.8p.%.2lx: %-8s %N\t", f->start, f-FB, f->phase, f->dot);
+		print("%.8p.%.2zx: %-8s %N\t", f->start, f-FB, f->phase, f->dot);
 		if(f->op)
 			print("%s", f->op->name);
 		print("(");
@@ -932,6 +947,8 @@ xec(uchar *pc, uchar *end, Name *dot, Env *env, void **pret)
 	void *r;
 
 	PC = pc;
+	if(FB < F0 || FB >= FT)
+		goto Out;
 	FP = FB;
 
 	FP->tag = 0;
@@ -941,7 +958,7 @@ xec(uchar *pc, uchar *end, Name *dot, Env *env, void **pret)
 	FP->start = PC;
 	FP->end = end;
 	FP->aux = end;
-	FB->ref = nil;
+	FP->ref = nil;
 	FP->dot = dot;
 	FP->env = env;
 	FP->op = nil;
@@ -950,7 +967,7 @@ xec(uchar *pc, uchar *end, Name *dot, Env *env, void **pret)
 		if((++loop & 127) == 0)
 			gc();
 		if(amldebug)
-			print("\n%.8p.%.2lx %-8s\t%N\t", PC, FP - FB, FP->phase, FP->dot);
+			print("\n%.8p.%.2zx %-8s\t%N\t", PC, FP - FB, FP->phase, FP->dot);
 		r = nil;
 		c = *FP->phase++;
 		switch(c){
@@ -1155,7 +1172,7 @@ evalconst(void)
 	case 0x01:
 		return mki(1);
 	case 0xFF:
-		return mki(-1);
+		return mki(~0ULL);
 	}
 	return nil;
 }
@@ -1334,6 +1351,12 @@ evalfield(void)
 			goto Out;
 		flags = ival(FP->arg[2]);
 		break;
+	case Obfld:
+		df = deref(FP->arg[1]);
+		if(df == nil || TAG(df) != 'f')
+			goto Out;
+		flags = ival(FP->arg[3]);
+		break;
 	}
 	p = PC;
 	if(p >= FP->end)
@@ -1372,6 +1395,12 @@ evalfield(void)
 			f->bitoff = df->bitoff + (bitoff % (wa*8));
 			f->indexv = mki((bitoff/(wa*8))*wa);
 			f->index = FP->arg[0];
+			break;
+		case Obfld:
+			f->reg = FP->arg[0];
+			f->bitoff = bitoff;
+			f->indexv = FP->arg[2];
+			f->index = df;
 			break;
 		}
 		bitoff += n;
@@ -1442,14 +1471,12 @@ evalcond(void)
 	return nil;
 }
 
-static void*
-evalcmp(void)
+static vlong
+cmp1(void *a, void *b)
 {
-	void *a, *b;
-	int tag, c;
+	vlong c;
+	int tag;
 
-	a = FP->arg[0];
-	b = FP->arg[1];
 	if(a == nil || TAG(a) == 'i'){
 		c = ival(a) - ival(b);
 	} else {
@@ -1457,20 +1484,27 @@ evalcmp(void)
 		if(b == nil || TAG(b) != tag)
 			b = copy(tag, b);
 		if(TAG(b) != tag)
-			return nil;	/* botch */
+			return -1;	/* botch */
 		switch(tag){
 		default:
-			return nil;	/* botch */
+			return -1;	/* botch */
 		case 's':
 			c = strcmp((char*)a, (char*)b);
 			break;
 		case 'b':
-			if((c = SIZE(a) - SIZE(b)) == 0)
+			c = SIZE(a) - SIZE(b);
+			if(c == 0)
 				c = memcmp(a, b, SIZE(a));
 			break;
 		}
 	}
+	return c;
+}
 
+static void*
+evalcmp(void)
+{
+	vlong c = cmp1(FP->arg[0], FP->arg[1]);
 	switch(FP->op - optab){
 	case Oleq:
 		if(c == 0) return mki(1);
@@ -1613,7 +1647,7 @@ evalindex(void)
 	Field *f;
 	void *p;
 	Ref *r;
-	int x;
+	uvlong x;
 
 	x = ival(FP->arg[1]);
 	if(p = deref(FP->arg[0])) switch(TAG(p)){
@@ -1622,7 +1656,7 @@ evalindex(void)
 			break;
 		/* no break */
 	case 'b':
-		if(x < 0 || x >= SIZE(p))
+		if(x >= SIZE(p))
 			break;
 		f = mk('u', sizeof(Field));
 		f->reg = p;
@@ -1631,7 +1665,7 @@ evalindex(void)
 		store(f, FP->arg[2]);
 		return f;
 	case 'p':
-		if(x < 0 || x >= (SIZE(p)/sizeof(void*)))
+		if(x >= (SIZE(p)/sizeof(void*)))
 			break;
 		if(TAG(FP->arg[0]) == 'A' || TAG(FP->arg[0]) == 'L')
 			r = mk(TAG(FP->arg[0]), sizeof(Ref));
@@ -1643,6 +1677,37 @@ evalindex(void)
 		return r;
 	}
 	return nil;
+}
+
+static int
+match1(int op, void *a, void *b)
+{
+	vlong c = cmp1(a, b);
+	switch(op){
+	case 0:	return 1;
+	case 1:	return c == 0;
+	case 2: return c <= 0;
+	case 3: return c < 0;
+	case 4: return c >= 0;
+	case 5: return c > 0;
+	}
+	return 0;
+}
+
+static void*
+evalmatch(void)
+{
+	void **p = FP->arg[0];
+	if(p != nil && TAG(p) == 'p'){
+		uvlong i, n = SIZE(p)/sizeof(void*);
+		int o1 = ival(FP->arg[1]), o2 = ival(FP->arg[3]);
+		for(i=ival(FP->arg[5]); i<n; i++){
+			void *a = deref(p[i]);
+			if(match1(o1, a, FP->arg[2]) && match1(o2, a, FP->arg[4]))
+				return mki(i);
+		}
+	}
+	return mki(~0ULL);
 }
 
 static void*
@@ -1835,6 +1900,24 @@ evalsleep(void)
 	return nil;
 }
 
+static void*
+evalconv(void)
+{
+	void *r;
+
+	r = nil;
+	switch(FP->op - optab){
+	case Otoint:
+		if(FP->arg[0] != nil && TAG(FP->arg[0]) == 's')
+			r = mki(strtoull((char*)FP->arg[0], 0, 0));
+		else
+			r = mki(ival(FP->arg[0]));
+		break;
+	}
+	store(r, FP->arg[1]);
+	return r;
+}
+
 static Op optab[] = {
 	[Obad]		"",			"",		evalbad,
 	[Onop]		"Noop",			"",		evalnop,
@@ -1861,6 +1944,7 @@ static Op optab[] = {
 	[Oreg]		"OperationRegion",	"N1ii",		evalreg,
 	[Ofld]		"Field",		"{n1",		evalfield,
 	[Oxfld]		"IndexField",		"{nn1",		evalfield,
+	[Obfld]		"BankField",		"{nni1",	evalfield,
 
 	[Ocfld]		"CreateField",		"*iiN",		evalcfield,
 	[Ocfld0]	"CreateBitField",	"*iN",		evalcfield,
@@ -1914,6 +1998,7 @@ static Op optab[] = {
 
 	[Ostore]	"Store",		"*@",		evalstore,
 	[Oindex]	"Index",		"@i@",		evalindex,
+	[Omatch]	"Match",		"*1*1*i",	evalmatch,
 	[Osize]		"SizeOf",		"*",		evalsize,
 	[Oref]		"RefOf",		"@",		evaliarg0,
 	[Ocref]		"CondRefOf",		"@@",		evalcondref,
@@ -1926,6 +2011,8 @@ static Op optab[] = {
 	[Osleep]	"Sleep",		"i",		evalsleep,
 	[Oload] 	"Load", 		"*@}", 		evalload,
 	[Ounload]	"Unload",		"@",		evalnop,
+
+	[Otoint]	"ToInteger",		"*@",		evalconv,
 };
 
 static uchar octab1[] = {
@@ -1946,9 +2033,9 @@ static uchar octab1[] = {
 /* 70 */	Ostore,	Oref,	Oadd,	Ocat,	Osub,	Oinc,	Odec,	Omul,
 /* 78 */	Odiv,	Oshl,	Oshr,	Oand,	Onand,	Oor,	Onor,	Oxor,
 /* 80 */	Onot,	Olbit,	Orbit,	Oderef,	Obad,	Omod,	Obad,	Osize,
-/* 88 */	Oindex,	Obad,	Ocfld4,	Ocfld2,	Ocfld1,	Ocfld0,	Obad,	Ocfld8,
+/* 88 */	Oindex,	Omatch,	Ocfld4,	Ocfld2,	Ocfld1,	Ocfld0,	Obad,	Ocfld8,
 /* 90 */	Oland,	Olor,	Olnot,	Oleq,	Olgt,	Ollt,	Obad,	Obad,
-/* 98 */	Obad,	Obad,	Obad,	Obad,	Obad,	Obad,	Obad,	Obad,
+/* 98 */	Obad,	Otoint,	Obad,	Obad,	Obad,	Obad,	Obad,	Obad,
 /* A0 */	Oif,	Oelse,	Owhile,	Onop,	Oret,	Obreak,	Obad,	Obad,
 /* A8 */	Obad,	Obad,	Obad,	Obad,	Obad,	Obad,	Obad,	Obad,
 /* B0 */	Obad,	Obad,	Obad,	Obad,	Obad,	Obad,	Obad,	Obad,
@@ -1980,7 +2067,7 @@ static uchar octab2[] = {
 /* 68 */	Obad,	Obad,	Obad,	Obad,	Obad,	Obad,	Obad,	Obad,
 /* 70 */	Obad,	Obad,	Obad,	Obad,	Obad,	Obad,	Obad,	Obad,
 /* 78 */	Obad,	Obad,	Obad,	Obad,	Obad,	Obad,	Obad,	Obad,
-/* 80 */	Oreg,	Ofld,	Odev,	Ocpu,	Oprc,	Othz,	Oxfld,	Obad,
+/* 80 */	Oreg,	Ofld,	Odev,	Ocpu,	Oprc,	Othz,	Oxfld,	Obfld,
 /* 88 */	Obad,	Obad,	Obad,	Obad,	Obad,	Obad,	Obad,	Obad,
 /* 90 */	Obad,	Obad,	Obad,	Obad,	Obad,	Obad,	Obad,	Obad,
 /* 98 */	Obad,	Obad,	Obad,	Obad,	Obad,	Obad,	Obad,	Obad,
@@ -2078,8 +2165,14 @@ amlinit(void)
 {
 	Name *n;
 
+	FB = F0;
+	FP = F0-1;
+
 	fmtinstall('V', Vfmt);
 	fmtinstall('N', Nfmt);
+
+	if(!amlintmask)
+		amlintmask = ~0ULL;
 
 	n = mk('N', sizeof(Name));
 	n->up = n;
@@ -2112,7 +2205,8 @@ void
 amlexit(void)
 {
 	amlroot = nil;
-	FP = FB-1;
+	FB = F0;
+	FP = F0-1;
 	gc();
 }
 
@@ -2191,6 +2285,8 @@ amleval(void *dot, char *fmt, ...)
 			return -1;
 		if(m->eval == nil)
 			return xec(m->start, m->end, forkname(m->name), e, r);
+		if(FB < F0 || FB >= FT)
+			return -1;
 		FP = FB;
 		FP->op = nil;
 		FP->env = e;
